@@ -160,6 +160,7 @@ static CGFloat const PBJVideoBitRate1280x750 = 5000000 * 8;
 @property (nonatomic, copy) NSString *captureSessionPreset;
 @property (nonatomic, copy) NSString *captureDirectory;
 @property (nonatomic) PBJOutputFormat outputFormat;
+@property (nonatomic, readonly) AVCaptureDevice *currentDevice;
 
 // video compression settings
 
