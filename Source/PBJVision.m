@@ -1817,6 +1817,7 @@ typedef void (^PBJVisionBlock)();
     
     AVCaptureConnection *videoConnection = [_captureOutputVideo connectionWithMediaType:AVMediaTypeVideo];
     [self _setOrientationForConnection:videoConnection];
+    _flags.videoWritten = NO;
 }
 
 - (void)startVideoCapture
