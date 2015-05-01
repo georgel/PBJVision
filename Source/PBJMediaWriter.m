@@ -41,11 +41,15 @@
     AVAssetWriter *_assetWriter;
 	AVAssetWriterInput *_assetWriterAudioInput;
 	AVAssetWriterInput *_assetWriterVideoInput;
+    AVAssetWriterInputPixelBufferAdaptor *_assetWriterInputPixelBufferAdaptor;
     
     NSURL *_outputURL;
     
     CMTime _audioTimestamp;
     CMTime _videoTimestamp;
+    
+    BOOL _audioReady;
+    BOOL _videoReady;
 }
 
 @end
@@ -72,7 +76,7 @@
 - (BOOL)isVideoReady
 {
     AVAuthorizationStatus videoAuthorizationStatus = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
-
+    
     BOOL isVideoNotAuthorized = (videoAuthorizationStatus == AVAuthorizationStatusNotDetermined || videoAuthorizationStatus == AVAuthorizationStatusDenied);
     BOOL isVideoSetup = (_assetWriterVideoInput != nil) || isVideoNotAuthorized;
     
@@ -124,6 +128,10 @@
                 if (videoAuthorizationStatus == AVAuthorizationStatusDenied && [_delegate respondsToSelector:@selector(mediaWriterDidObserveVideoAuthorizationStatusDenied:)]) {
                     [_delegate mediaWriterDidObserveVideoAuthorizationStatusDenied:self];
                 }
+            } else {
+                NSLog(@"has auth");
+
+                _videoReady = YES;
             }
             
         }
@@ -212,7 +220,21 @@
                 DLog(@"setup video");
             }
 #endif
+        
+        // create a pixel buffer adaptor for the asset writer; we need to obtain pixel buffers for rendering later from its pixel buffer pool
+        _assetWriterInputPixelBufferAdaptor = [AVAssetWriterInputPixelBufferAdaptor assetWriterInputPixelBufferAdaptorWithAssetWriterInput:_assetWriterVideoInput sourcePixelBufferAttributes:
+                                               [NSDictionary dictionaryWithObjectsAndKeys:
+                                                [NSNumber numberWithInteger:kCVPixelFormatType_32BGRA], (id)kCVPixelBufferPixelFormatTypeKey,
+                                                videoSettings[AVVideoWidthKey], (id)kCVPixelBufferWidthKey,
+                                                videoSettings[AVVideoWidthKey], (id)kCVPixelBufferHeightKey,
+                                                (id)kCFBooleanTrue, (id)kCVPixelFormatOpenGLESCompatibility,
+                                                nil]];
 
+            if ([_assetWriter canAddInput:_assetWriterVideoInput]) {
+                NSLog(@"ass can write");
+                [_assetWriter addInput:_assetWriterVideoInput];
+                _videoReady = YES;
+            }
 		} else {
 			DLog(@"couldn't add asset writer video input");
 		}
@@ -224,7 +246,17 @@
         
 	}
     
-    return self.isVideoReady;
+    return _videoReady;
+}
+
+- (CVReturn)createPixelBufferFromPool:(CVPixelBufferRef*)renderedOutputPixelBuffer
+{
+    CVReturn err = CVPixelBufferPoolCreatePixelBuffer(nil, _assetWriterInputPixelBufferAdaptor.pixelBufferPool, renderedOutputPixelBuffer);
+    if (err || !renderedOutputPixelBuffer)
+    {
+        NSLog(@"Cannot obtain a pixel buffer from the buffer pool %d", err);
+    }
+    return err;
 }
 
 #pragma mark - sample buffer writing
@@ -305,6 +337,8 @@
     [_assetWriterVideoInput markAsFinished];
     [_assetWriterAudioInput markAsFinished];
     [_assetWriter finishWritingWithCompletionHandler:handler];
+    
+    _videoReady = NO;
 }
 
 

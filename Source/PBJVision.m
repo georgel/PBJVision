@@ -1765,7 +1765,7 @@ typedef void (^PBJVisionBlock)();
     return [self supportsVideoCapture] && [self isCaptureSessionActive] && !_flags.changingModes && isDiskSpaceAvailable;
 }
 
-- (void)startVideoCapture
+- (void)setupVideoCapture
 {
     if (![self _canSessionCaptureWithOutput:_currentOutput]) {
         [self _failVideoCaptureWithErrorCode:PBJVisionErrorSessionFailed];
@@ -1773,55 +1773,61 @@ typedef void (^PBJVisionBlock)();
         return;
     }
     
-    DLog(@"starting video capture");
+    if (_flags.recording || _flags.paused)
+        return;
+    
+    NSString *guid = [[NSUUID new] UUIDString];
+    NSString *outputFile = [NSString stringWithFormat:@"video_%@.mp4", guid];
+    
+    if ([_delegate respondsToSelector:@selector(vision:willStartVideoCaptureToFile:)]) {
+        outputFile = [_delegate vision:self willStartVideoCaptureToFile:outputFile];
         
-    [self _enqueueBlockOnCaptureVideoQueue:^{
-
-        if (_flags.recording || _flags.paused)
-            return;
-	
-        NSString *guid = [[NSUUID new] UUIDString];
-        NSString *outputFile = [NSString stringWithFormat:@"video_%@.mp4", guid];
-        
-        if ([_delegate respondsToSelector:@selector(vision:willStartVideoCaptureToFile:)]) {
-            outputFile = [_delegate vision:self willStartVideoCaptureToFile:outputFile];
-            
-            if (!outputFile) {
-                [self _failVideoCaptureWithErrorCode:PBJVisionErrorBadOutputFile];
-                return;
-            }
-        }
-        
-        NSString *outputDirectory = (_captureDirectory == nil ? NSTemporaryDirectory() : _captureDirectory);
-        NSString *outputPath = [outputDirectory stringByAppendingPathComponent:outputFile];
-        NSURL *outputURL = [NSURL fileURLWithPath:outputPath];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:outputPath]) {
-            NSError *error = nil;
-            if (![[NSFileManager defaultManager] removeItemAtPath:outputPath error:&error]) {
-                [self _failVideoCaptureWithErrorCode:PBJVisionErrorOutputFileExists];
-
-                DLog(@"could not setup an output file (file exists)");
-                return;
-            }
-        }
-
-        if (!outputPath || [outputPath length] == 0) {
+        if (!outputFile) {
             [self _failVideoCaptureWithErrorCode:PBJVisionErrorBadOutputFile];
-            
-            DLog(@"could not setup an output file");
             return;
         }
-        
-        if (_mediaWriter) {
-            _mediaWriter.delegate = nil;
-            _mediaWriter = nil;
+    }
+    
+    NSString *outputDirectory = (_captureDirectory == nil ? NSTemporaryDirectory() : _captureDirectory);
+    NSString *outputPath = [outputDirectory stringByAppendingPathComponent:outputFile];
+    NSURL *outputURL = [NSURL fileURLWithPath:outputPath];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:outputPath]) {
+        NSError *error = nil;
+        if (![[NSFileManager defaultManager] removeItemAtPath:outputPath error:&error]) {
+            [self _failVideoCaptureWithErrorCode:PBJVisionErrorOutputFileExists];
+            
+            DLog(@"could not setup an output file (file exists)");
+            return;
         }
-        _mediaWriter = [[PBJMediaWriter alloc] initWithOutputURL:outputURL];
-        _mediaWriter.delegate = self;
+    }
+    
+    if (!outputPath || [outputPath length] == 0) {
+        [self _failVideoCaptureWithErrorCode:PBJVisionErrorBadOutputFile];
+        
+        DLog(@"could not setup an output file");
+        return;
+    }
+    
+    if (_mediaWriter) {
+        _mediaWriter.delegate = nil;
+        _mediaWriter = nil;
+    }
+    _mediaWriter = [[PBJMediaWriter alloc] initWithOutputURL:outputURL];
+    _mediaWriter.delegate = self;
+    
+    AVCaptureConnection *videoConnection = [_captureOutputVideo connectionWithMediaType:AVMediaTypeVideo];
+    [self _setOrientationForConnection:videoConnection];
+}
 
-        AVCaptureConnection *videoConnection = [_captureOutputVideo connectionWithMediaType:AVMediaTypeVideo];
-        [self _setOrientationForConnection:videoConnection];
-
+- (void)startVideoCapture
+{
+    if (!_mediaWriter) {
+        [self setupVideoCapture];
+    }
+    
+    DLog(@"starting video capture");
+    
+    [self _enqueueBlockOnCaptureVideoQueue:^{
         _startTimestamp = CMClockGetTime(CMClockGetHostTimeClock());
         _timeOffset = kCMTimeInvalid;
         
@@ -2675,13 +2681,15 @@ typedef void (^PBJVisionBlock)();
     
     // render the filtered, square, center cropped image back to the outup video
     CVPixelBufferRef renderedOutputPixelBuffer = NULL;
+    
+    //This square cropping doesn't work no matter what we do. Video is never ready because currentoutput is nil  since we can't setup till video recording starts. i dont think the pixel buffer is returning what we need either.
     if ( _mediaWriter.videoReady ) {
         CVReturn err = [_mediaWriter createPixelBufferFromPool:&renderedOutputPixelBuffer];
         if ( !err && renderedOutputPixelBuffer ) {
             [_ciContext render:cropImage toCVPixelBuffer:renderedOutputPixelBuffer];
         }
     }
-    
+
     
     
     
