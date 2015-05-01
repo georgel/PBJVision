@@ -79,7 +79,7 @@
     
     BOOL isVideoNotAuthorized = (videoAuthorizationStatus == AVAuthorizationStatusNotDetermined || videoAuthorizationStatus == AVAuthorizationStatusDenied);
     BOOL isVideoSetup = (_assetWriterVideoInput != nil) || isVideoNotAuthorized;
-    
+
     return isVideoSetup;
 }
 

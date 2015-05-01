@@ -28,7 +28,6 @@
 #import "PBJMediaWriter.h"
 #import "PBJGLProgram.h"
 
-#import <CoreImage/CoreImage.h>
 #import <ImageIO/ImageIO.h>
 #import <OpenGLES/EAGL.h>
 
@@ -188,6 +187,8 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
 }
 
 @property (nonatomic) AVCaptureDevice *currentDevice;
+@property (nonatomic, readonly) GPUImageView *filteredPreviewView;
+
 @property (nonatomic, strong) GPUImageMovie *movieDataInput;
 @property (nonatomic, strong) GPUImageFilterGroup *currentFilterGroup;
 @end
@@ -769,8 +770,8 @@ typedef void (^PBJVisionBlock)();
 
 - (void)clearPreviewView
 {
-//    [self.currentFilterGroup removeAllTargets];
-//    [self.currentFilterGroup addTarget:_filteredPreviewView];
+    [self.currentFilterGroup removeAllTargets];
+    [self.currentFilterGroup addTarget:_filteredPreviewView];
 }
 
 #pragma mark - camera
@@ -2574,124 +2575,124 @@ typedef void (^PBJVisionBlock)();
 
     [EAGLContext setCurrentContext:_context];
 
-    [self _cleanUpTextures];
-
-    size_t width = CVPixelBufferGetWidth(imageBuffer);
-    size_t height = CVPixelBufferGetHeight(imageBuffer);
-
-    // only bind the vertices once or if parameters change
+//    [self _cleanUpTextures];
+//
+//    size_t width = CVPixelBufferGetWidth(imageBuffer);
+//    size_t height = CVPixelBufferGetHeight(imageBuffer);
+//
+//    // only bind the vertices once or if parameters change
+//    
+//    if (_bufferWidth != width ||
+//        _bufferHeight != height ||
+//        _bufferDevice != _cameraDevice ||
+//        _bufferOrientation != _cameraOrientation) {
+//        
+//        _bufferWidth = width;
+//        _bufferHeight = height;
+//        _bufferDevice = _cameraDevice;
+//        _bufferOrientation = _cameraOrientation;
+//        [self _setupBuffers];
+//        
+//    }
+//    
+//    // always upload the texturs since the input may be changing
+//    
+//    CVReturn error = 0;
+//    
+//    // Y-plane
+//    glActiveTexture(GL_TEXTURE0);
+//    error = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+//                                                        _videoTextureCache,
+//                                                        imageBuffer,
+//                                                        NULL,
+//                                                        GL_TEXTURE_2D,
+//                                                        GL_RED_EXT,
+//                                                        (GLsizei)_bufferWidth,
+//                                                        (GLsizei)_bufferHeight,
+//                                                        GL_RED_EXT,
+//                                                        GL_UNSIGNED_BYTE,
+//                                                        0,
+//                                                        &_lumaTexture);
+//    if (error) {
+//        DLog(@"error CVOpenGLESTextureCacheCreateTextureFromImage (%d)", error);
+//    }
+//    
+//    glBindTexture(CVOpenGLESTextureGetTarget(_lumaTexture), CVOpenGLESTextureGetName(_lumaTexture));
+//	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+//	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); 
+//    
+//    // UV-plane
+//    glActiveTexture(GL_TEXTURE1);
+//    error = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
+//                                                         _videoTextureCache,
+//                                                         imageBuffer,
+//                                                         NULL,
+//                                                         GL_TEXTURE_2D,
+//                                                         GL_RG_EXT,
+//                                                         (GLsizei)(_bufferWidth * 0.5),
+//                                                         (GLsizei)(_bufferHeight * 0.5),
+//                                                         GL_RG_EXT,
+//                                                         GL_UNSIGNED_BYTE,
+//                                                         1,
+//                                                         &_chromaTexture);
+//    if (error) {
+//        DLog(@"error CVOpenGLESTextureCacheCreateTextureFromImage (%d)", error);
+//    }
+//    
+//    glBindTexture(CVOpenGLESTextureGetTarget(_chromaTexture), CVOpenGLESTextureGetName(_chromaTexture));
+//	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+//	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+//    
+//
+//
+//    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     
-    if (_bufferWidth != width ||
-        _bufferHeight != height ||
-        _bufferDevice != _cameraDevice ||
-        _bufferOrientation != _cameraOrientation) {
-        
-        _bufferWidth = width;
-        _bufferHeight = height;
-        _bufferDevice = _cameraDevice;
-        _bufferOrientation = _cameraOrientation;
-        [self _setupBuffers];
-        
-    }
-    
-    // always upload the texturs since the input may be changing
-    
-    CVReturn error = 0;
-    
-    // Y-plane
-    glActiveTexture(GL_TEXTURE0);
-    error = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-                                                        _videoTextureCache,
-                                                        imageBuffer,
-                                                        NULL,
-                                                        GL_TEXTURE_2D,
-                                                        GL_RED_EXT,
-                                                        (GLsizei)_bufferWidth,
-                                                        (GLsizei)_bufferHeight,
-                                                        GL_RED_EXT,
-                                                        GL_UNSIGNED_BYTE,
-                                                        0,
-                                                        &_lumaTexture);
-    if (error) {
-        DLog(@"error CVOpenGLESTextureCacheCreateTextureFromImage (%d)", error);
-    }
-    
-    glBindTexture(CVOpenGLESTextureGetTarget(_lumaTexture), CVOpenGLESTextureGetName(_lumaTexture));
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); 
-    
-    // UV-plane
-    glActiveTexture(GL_TEXTURE1);
-    error = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault,
-                                                         _videoTextureCache,
-                                                         imageBuffer,
-                                                         NULL,
-                                                         GL_TEXTURE_2D,
-                                                         GL_RG_EXT,
-                                                         (GLsizei)(_bufferWidth * 0.5),
-                                                         (GLsizei)(_bufferHeight * 0.5),
-                                                         GL_RG_EXT,
-                                                         GL_UNSIGNED_BYTE,
-                                                         1,
-                                                         &_chromaTexture);
-    if (error) {
-        DLog(@"error CVOpenGLESTextureCacheCreateTextureFromImage (%d)", error);
-    }
-    
-    glBindTexture(CVOpenGLESTextureGetTarget(_chromaTexture), CVOpenGLESTextureGetName(_chromaTexture));
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    
-
-
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    
-    // convert this sample buffer into a CIImage (null colorspace to avoid colormatching)
-    NSDictionary *options = @{ (id)kCIImageColorSpace : (id)kCFNull };
-    CIImage *image = [CIImage imageWithCVPixelBuffer:imageBuffer options:options];
-    CGRect sourceExtent = image.extent;
-    
-    // manual mirroring!
-    //    if (_cameraDevice == PBJCameraDeviceFront)
-    //    {
-    //        // this will mirror the image in the final output video
-    //        CGSize size = [image extent].size;
-    //        image = [image imageByApplyingTransform:CGAffineTransformMakeScale(-1.0, 1.0)];
-    //        image = [image imageByApplyingTransform:CGAffineTransformMakeTranslation(size.width, 0)];
-    //    }
-    //
-    // center crop the source image to a square for video output
-    CGRect squareRect = [self squareCropRect:sourceExtent withCenterPercent:0.5];
-    CIImage *cropImage = [image imageByCroppingToRect:squareRect];
-    
-    // deterine the scale and amount video should be moved over to fit the video output dimensions
-    float scale = 1.0f;
-    float xTrans = -squareRect.origin.x;
-    float yTrans = -squareRect.origin.y;
-    if ( _outputFormat == PBJOutputFormatSquare ) {
-        scale = (360.0f / squareRect.size.width);
-        xTrans *= scale;
-        yTrans *= scale;
-    }
-    
-    // apply transform to make final image fit perfect in output video dimensions
-    if ( scale != 1.0f ) {
-        cropImage = [image imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
-    }
-    cropImage = [cropImage imageByApplyingTransform:CGAffineTransformMakeTranslation(xTrans, yTrans)];
-    
-    // render the filtered, square, center cropped image back to the outup video
+//    // convert this sample buffer into a CIImage (null colorspace to avoid colormatching)
+//    NSDictionary *options = @{ (id)kCIImageColorSpace : (id)kCFNull };
+//    CIImage *image = [CIImage imageWithCVPixelBuffer:imageBuffer options:options];
+//    CGRect sourceExtent = image.extent;
+//    
+//    // manual mirroring!
+//    //    if (_cameraDevice == PBJCameraDeviceFront)
+//    //    {
+//    //        // this will mirror the image in the final output video
+//    //        CGSize size = [image extent].size;
+//    //        image = [image imageByApplyingTransform:CGAffineTransformMakeScale(-1.0, 1.0)];
+//    //        image = [image imageByApplyingTransform:CGAffineTransformMakeTranslation(size.width, 0)];
+//    //    }
+//    //
+//    // center crop the source image to a square for video output
+//    CGRect squareRect = [self squareCropRect:sourceExtent withCenterPercent:0.5];
+//    CIImage *cropImage = [image imageByCroppingToRect:squareRect];
+//    
+//    // deterine the scale and amount video should be moved over to fit the video output dimensions
+//    float scale = 1.0f;
+//    float xTrans = -squareRect.origin.x;
+//    float yTrans = -squareRect.origin.y;
+//    if ( _outputFormat == PBJOutputFormatSquare ) {
+//        scale = (360.0f / squareRect.size.width);
+//        xTrans *= scale;
+//        yTrans *= scale;
+//    }
+//    
+//    // apply transform to make final image fit perfect in output video dimensions
+//    if ( scale != 1.0f ) {
+//        cropImage = [image imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
+//    }
+//    cropImage = [cropImage imageByApplyingTransform:CGAffineTransformMakeTranslation(xTrans, yTrans)];
+//    
+//    // render the filtered, square, center cropped image back to the outup video
     CVPixelBufferRef renderedOutputPixelBuffer = NULL;
-    
-    //This square cropping doesn't work no matter what we do. Video is never ready because currentoutput is nil  since we can't setup till video recording starts. i dont think the pixel buffer is returning what we need either.
-    if ( _mediaWriter.videoReady ) {
-        CVReturn err = [_mediaWriter createPixelBufferFromPool:&renderedOutputPixelBuffer];
-        if ( !err && renderedOutputPixelBuffer ) {
-            [_ciContext render:cropImage toCVPixelBuffer:renderedOutputPixelBuffer];
-        }
-    }
-
-    
+//
+//    //This square cropping doesn't work no matter what we do. Video is never ready because currentoutput is nil  since we can't setup till video recording starts. i dont think the pixel buffer is returning what we need either.
+//    if ( _mediaWriter.videoReady ) {
+//        CVReturn err = [_mediaWriter createPixelBufferFromPool:&renderedOutputPixelBuffer];
+//        if ( !err && renderedOutputPixelBuffer ) {
+//            [_ciContext render:cropImage toCVPixelBuffer:renderedOutputPixelBuffer];
+//        }
+//    }
+//
+//    
     
     
     // Create the views if none exist
@@ -2711,12 +2712,17 @@ typedef void (^PBJVisionBlock)();
             _movieDataInput = [[GPUImageMovie alloc] init];
             [_movieDataInput yuvConversionSetup];
         }
-        
+        GPUImageFilterGroup *newFilterGroup = [[GPUImageFilterGroup alloc] init];
         GPUImageSepiaFilter *sepiaFilter = [[GPUImageSepiaFilter alloc] init];
+        [(GPUImageFilterGroup *)newFilterGroup addFilter:sepiaFilter];
 
-        if (![[_movieDataInput targets] containsObject:sepiaFilter]) {
-            [_movieDataInput addTarget:sepiaFilter];
-            [sepiaFilter addTarget:_filteredPreviewView];
+        if (![[_movieDataInput targets] containsObject:newFilterGroup]) {
+            [_movieDataInput removeTarget:_currentFilterGroup];
+            [_currentFilterGroup removeAllTargets];
+            _currentFilterGroup = newFilterGroup;
+
+            [_movieDataInput addTarget:_currentFilterGroup];
+            [_currentFilterGroup addTarget:_filteredPreviewView];
 
         }
 
