@@ -141,6 +141,8 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
     AVCaptureVideoPreviewLayer *_previewLayer;
     CGRect _cleanAperture;
 
+    GPUImageView *_filteredPreviewView;
+
     CMTime _startTimestamp;
     CMTime _timeOffset;
     CMTime _maximumCaptureDuration;
@@ -160,7 +162,14 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
     CVOpenGLESTextureCacheRef _videoTextureCache;
     
     CIContext *_ciContext;
+    CIContext *_ciContextPreview;
+
+    NSMutableArray *_previousSecondTimestamps;
+    Float64 _frameRate;
     
+    CMTime _lastVideoDisplayTimestamp;
+    CMTime _minDisplayDuration;
+
     // flags
     
     struct {
@@ -179,7 +188,8 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
 }
 
 @property (nonatomic) AVCaptureDevice *currentDevice;
-
+@property (nonatomic, strong) GPUImageMovie *movieDataInput;
+@property (nonatomic, strong) GPUImageFilterGroup *currentFilterGroup;
 @end
 
 @implementation PBJVision
@@ -222,6 +232,10 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
 }
 
 #pragma mark - getters/setters
+- (void)setPreviewFrameRate:(int)frameRate
+{
+    _minDisplayDuration = CMTimeMake(1, frameRate);
+}
 
 - (BOOL)isCaptureSessionActive
 {
@@ -630,6 +644,12 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
     return NO;
 }
 
+- (CALayer*)videoPreviewLayer
+{
+//    return self.isFilterEnabled ? self.filteredPreviewView.layer : self.previewView.layer;
+    return self.filteredPreviewView.layer;
+}
+
 #pragma mark - init
 
 - (id)init
@@ -668,11 +688,15 @@ typedef NS_ENUM(GLint, PBJVisionUniformLocationTypes)
         _captureCaptureDispatchQueue = dispatch_queue_create("PBJVisionCapture", DISPATCH_QUEUE_SERIAL); // protects capture
         
         _previewLayer = [[AVCaptureVideoPreviewLayer alloc] initWithSession:nil];
-        
+        _previewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
         _maximumCaptureDuration = kCMTimeInvalid;
 
         [self setMirroringMode:PBJMirroringAuto];
 
+        _previousSecondTimestamps = [[NSMutableArray alloc] init];
+        // controls max frame-rate for both capture preview (solo) and duet playback
+        _minDisplayDuration = CMTimeMake(1, 15);
+        
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_applicationWillEnterForeground:) name:UIApplicationWillEnterForegroundNotification object:[UIApplication sharedApplication]];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_applicationDidEnterBackground:) name:UIApplicationDidEnterBackgroundNotification object:[UIApplication sharedApplication]];
     }
@@ -732,6 +756,21 @@ typedef void (^PBJVisionBlock)();
     [_captureSession beginConfiguration];
     block();
     [_captureSession commitConfiguration];
+}
+
+
+- (void)setupPreviewViews
+{
+    DLog(@"resetting preview views...");
+    
+    _filteredPreviewView = [[GPUImageView alloc] initWithFrame:CGRectMake(0, 0, 828, 828)];
+//    [_filteredPreviewView setFillMode:kGPUImageFillModePreserveAspectRatioAndFill];
+}
+
+- (void)clearPreviewView
+{
+//    [self.currentFilterGroup removeAllTargets];
+//    [self.currentFilterGroup addTarget:_filteredPreviewView];
 }
 
 #pragma mark - camera
@@ -1142,11 +1181,16 @@ typedef void (^PBJVisionBlock)();
 
 - (void)startPreview
 {
+    [self _enqueueBlockOnCaptureVideoQueue:^{
+        [self clearPreviewView];
+    }];
+    
     [self _enqueueBlockOnCaptureSessionQueue:^{
         if (!_captureSession) {
             [self _setupCamera];
             [self _setupSession];
         }
+        _lastVideoDisplayTimestamp = kCMTimeInvalid;
 
         [self setMirroringMode:_mirroringMode];
     
@@ -1193,6 +1237,7 @@ typedef void (^PBJVisionBlock)();
         _flags.previewRunning = NO;
     }];
 }
+
 
 - (void)freezePreview
 {
@@ -1589,6 +1634,8 @@ typedef void (^PBJVisionBlock)();
     if (!_ciContext) {
         _ciContext = [CIContext contextWithEAGLContext:[[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2]];
     }
+    
+    _ciContextPreview = [CIContext contextWithEAGLContext:[[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2]];
 
     CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     CIImage *ciImage = [CIImage imageWithCVPixelBuffer:pixelBuffer];
@@ -2123,32 +2170,35 @@ typedef void (^PBJVisionBlock)();
         return;
     }
 
-    if (!_flags.recording || _flags.paused) {
-        CFRelease(sampleBuffer);
-        return;
-    }
+//    if (!_flags.recording || _flags.paused) {
+//        CFRelease(sampleBuffer);
+//        return;
+//    }
 
-    if (!_mediaWriter) {
-        CFRelease(sampleBuffer);
-        return;
-    }
+//    if (!_mediaWriter) {
+//        CFRelease(sampleBuffer);
+//        return;
+//    }
     
     // setup media writer
     BOOL isVideo = (captureOutput == _captureOutputVideo);
-    if (!isVideo && !_mediaWriter.isAudioReady) {
-        [self _setupMediaWriterAudioInputWithSampleBuffer:sampleBuffer];
-        DLog(@"ready for audio (%d)", _mediaWriter.isAudioReady);
-    }
-    if (isVideo && !_mediaWriter.isVideoReady) {
-        [self _setupMediaWriterVideoInputWithSampleBuffer:sampleBuffer];
-        DLog(@"ready for video (%d)", _mediaWriter.isVideoReady);
+    if (_flags.recording) {
+        if (!isVideo && !_mediaWriter.isAudioReady) {
+            [self _setupMediaWriterAudioInputWithSampleBuffer:sampleBuffer];
+            DLog(@"ready for audio (%d)", _mediaWriter.isAudioReady);
+        }
+        if (isVideo && !_mediaWriter.isVideoReady) {
+            [self _setupMediaWriterVideoInputWithSampleBuffer:sampleBuffer];
+            DLog(@"ready for video (%d)", _mediaWriter.isVideoReady);
+        }
+        
+        BOOL isReadyToRecord = ((!_flags.audioCaptureEnabled || _mediaWriter.isAudioReady) && _mediaWriter.isVideoReady);
+        if (!isReadyToRecord) {
+            CFRelease(sampleBuffer);
+            return;
+        }
     }
 
-    BOOL isReadyToRecord = ((!_flags.audioCaptureEnabled || _mediaWriter.isAudioReady) && _mediaWriter.isVideoReady);
-    if (!isReadyToRecord) {
-        CFRelease(sampleBuffer);
-        return;
-    }
     
     CMTime currentTimestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
 
@@ -2500,18 +2550,20 @@ typedef void (^PBJVisionBlock)();
 
 // convert CoreVideo YUV pixel buffer (Y luminance and Cb Cr chroma) into RGB
 // processing is done on the GPU, operation WAY more efficient than converting on the CPU
-- (void)_processSampleBuffer:(CMSampleBufferRef)sampleBuffer
+- (CVPixelBufferRef)_processSampleBuffer:(CMSampleBufferRef)sampleBuffer
 {
     if (!_context)
-        return;
+        return NULL;
 
     if (!_videoTextureCache)
-        return;
+        return NULL;
 
     CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
-
+    
+    
+    
     if (CVPixelBufferLockBaseAddress(imageBuffer, 0) != kCVReturnSuccess)
-        return;
+        return NULL;
 
     [EAGLContext setCurrentContext:_context];
 
@@ -2583,11 +2635,159 @@ typedef void (^PBJVisionBlock)();
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     
-    if (CVPixelBufferUnlockBaseAddress(imageBuffer, 0) != kCVReturnSuccess)
-        return;
+
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    
+    // convert this sample buffer into a CIImage (null colorspace to avoid colormatching)
+    NSDictionary *options = @{ (id)kCIImageColorSpace : (id)kCFNull };
+    CIImage *image = [CIImage imageWithCVPixelBuffer:imageBuffer options:options];
+    CGRect sourceExtent = image.extent;
+    
+    // manual mirroring!
+    //    if (_cameraDevice == PBJCameraDeviceFront)
+    //    {
+    //        // this will mirror the image in the final output video
+    //        CGSize size = [image extent].size;
+    //        image = [image imageByApplyingTransform:CGAffineTransformMakeScale(-1.0, 1.0)];
+    //        image = [image imageByApplyingTransform:CGAffineTransformMakeTranslation(size.width, 0)];
+    //    }
+    //
+    // center crop the source image to a square for video output
+    CGRect squareRect = [self squareCropRect:sourceExtent withCenterPercent:0.5];
+    CIImage *cropImage = [image imageByCroppingToRect:squareRect];
+    
+    // deterine the scale and amount video should be moved over to fit the video output dimensions
+    float scale = 1.0f;
+    float xTrans = -squareRect.origin.x;
+    float yTrans = -squareRect.origin.y;
+    if ( _outputFormat == PBJOutputFormatSquare ) {
+        scale = (360.0f / squareRect.size.width);
+        xTrans *= scale;
+        yTrans *= scale;
+    }
+    
+    // apply transform to make final image fit perfect in output video dimensions
+    if ( scale != 1.0f ) {
+        cropImage = [image imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
+    }
+    cropImage = [cropImage imageByApplyingTransform:CGAffineTransformMakeTranslation(xTrans, yTrans)];
+    
+    // render the filtered, square, center cropped image back to the outup video
+    CVPixelBufferRef renderedOutputPixelBuffer = NULL;
+    if ( _mediaWriter.videoReady ) {
+        CVReturn err = [_mediaWriter createPixelBufferFromPool:&renderedOutputPixelBuffer];
+        if ( !err && renderedOutputPixelBuffer ) {
+            [_ciContext render:cropImage toCVPixelBuffer:renderedOutputPixelBuffer];
+        }
+    }
+    
+    
+    
+    
+    // Create the views if none exist
+    if(!_filteredPreviewView)
+    {
+        [self setupPreviewViews];
+    }
+    
+    // draw filtered image into preview view if enough time has past since last drawing
+    CMTime currentTimestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+    if (CMTIME_IS_INVALID(_lastVideoDisplayTimestamp) ||
+        CMTIME_COMPARE_INLINE(_lastVideoDisplayTimestamp, >, currentTimestamp) ||
+        CMTIME_COMPARE_INLINE(CMTimeSubtract(currentTimestamp, _lastVideoDisplayTimestamp), >, _minDisplayDuration))
+    {
+        if(!_movieDataInput)
+        {
+            _movieDataInput = [[GPUImageMovie alloc] init];
+            [_movieDataInput yuvConversionSetup];
+        }
+        
+        GPUImageSepiaFilter *sepiaFilter = [[GPUImageSepiaFilter alloc] init];
+
+        if (![[_movieDataInput targets] containsObject:sepiaFilter]) {
+            [_movieDataInput addTarget:sepiaFilter];
+            [sepiaFilter addTarget:_filteredPreviewView];
+
+        }
+
+        
+        runSynchronouslyOnVideoProcessingQueue(^{
+            [_movieDataInput processMovieFrame:sampleBuffer];
+        });
+        
+        
+        _lastVideoDisplayTimestamp = currentTimestamp;
+    }
+    
+    if (CVPixelBufferUnlockBaseAddress(imageBuffer, 0) != kCVReturnSuccess)
+        return NULL;
+    return renderedOutputPixelBuffer;
+
 }
+
+- (CGRect)centerCropRect:(CGRect)sourceRect toAspectRatio:(CGFloat)newAspectRatio
+{
+    CGFloat sourceAspect = (sourceRect.size.width / sourceRect.size.height);
+    
+    // determine cropped rect based on comparison to new aspect ratio
+    CGRect croppedRect = sourceRect;
+    if ( sourceAspect > newAspectRatio )
+    {
+        // landscape. use full height of the video image, and center crop the width
+        croppedRect.size.width = (croppedRect.size.height * newAspectRatio);
+        croppedRect.origin.x = (sourceRect.size.width - croppedRect.size.width) * 0.5f;
+    }
+    else
+    {
+        // portrait. use full width of the video image, and center crop the height
+        croppedRect.size.height = (croppedRect.size.width / newAspectRatio);
+        croppedRect.origin.y = (sourceRect.size.height - croppedRect.size.height) * 0.5f;
+    }
+    
+    return croppedRect;
+}
+
+- (CGRect)squareCropRect:(CGRect)sourceRect withCenterPercent:(CGFloat)centerPercent
+{
+    CGFloat sourceAspect = (sourceRect.size.width / sourceRect.size.height);
+    
+    // determine cropped rect based on comparison to new aspect ratio
+    CGRect croppedRect = sourceRect;
+    if ( sourceAspect > 1.0 )
+    {
+        // landscape. use full height of the video image, and determine horizontal centering by percentage
+        croppedRect.size.width = croppedRect.size.height;
+        CGFloat sourceCenterX = (sourceRect.size.width * centerPercent);
+        croppedRect.origin.x = sourceCenterX - (croppedRect.size.width * 0.5f);
+        
+        // check bounds
+        if ( croppedRect.origin.x < 0.0f ) {
+            croppedRect.origin.x = 0.0f;
+        }
+        else if ( croppedRect.origin.x + croppedRect.size.width > sourceRect.size.width ) {
+            croppedRect.origin.x = sourceRect.size.width - croppedRect.size.width;
+        }
+    }
+    else
+    {
+        // portrait. use full width of the video image, and determine vertical centering by percentage
+        croppedRect.size.height = croppedRect.size.width;
+        CGFloat sourceCenterY = (sourceRect.size.height * (1.0f - centerPercent));
+        croppedRect.origin.y = sourceCenterY - (croppedRect.size.height * 0.5f);
+        
+        // check bounds
+        if ( croppedRect.origin.y < 0.0f ) {
+            croppedRect.origin.y = 0.0f;
+        }
+        else if ( croppedRect.origin.y + croppedRect.size.height > sourceRect.size.height ) {
+            croppedRect.origin.y = sourceRect.size.height - croppedRect.size.height;
+        }
+    }
+    
+    return croppedRect;
+}
+
 
 - (void)_cleanUpTextures
 {

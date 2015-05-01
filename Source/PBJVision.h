@@ -25,6 +25,7 @@
 
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
+#import "GPUImage.h"
 
 // support for swift compiler
 #ifndef NS_ASSUME_NONNULL_BEGIN
@@ -129,6 +130,7 @@ static CGFloat const PBJVideoBitRate960x540 = 3750000 * 8;
 static CGFloat const PBJVideoBitRate1280x750 = 5000000 * 8;
 
 @class EAGLContext;
+@class GPUImageView;
 @protocol PBJVisionDelegate;
 @interface PBJVision : NSObject
 
@@ -155,6 +157,8 @@ static CGFloat const PBJVideoBitRate1280x750 = 5000000 * 8;
 
 @property (nonatomic) PBJMirroringMode mirroringMode;
 
+- (void)setupPreviewViews;
+
 // video output settings
 
 @property (nonatomic, copy) NSString *captureSessionPreset;
@@ -174,7 +178,7 @@ static CGFloat const PBJVideoBitRate1280x750 = 5000000 * 8;
 - (BOOL)supportsVideoFrameRate:(NSInteger)videoFrameRate;
 
 // preview
-
+@property (nonatomic, readonly) GPUImageView *filteredPreviewView;
 @property (nonatomic, readonly) AVCaptureVideoPreviewLayer *previewLayer;
 @property (nonatomic) BOOL autoUpdatePreviewOrientation;
 @property (nonatomic) PBJCameraOrientation previewOrientation;
